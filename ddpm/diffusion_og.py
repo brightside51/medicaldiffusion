@@ -1,6 +1,5 @@
 "Largely taken and adapted from https://github.com/lucidrains/video-diffusion-pytorch"
 
-import sys
 import math
 import copy
 import torch
@@ -21,13 +20,9 @@ from einops_exts import check_shape, rearrange_many
 
 from rotary_embedding_torch import RotaryEmbedding
 
-sys.path.append('ddpm')
-from text import tokenize, bert_embed, BERT_MODEL_DIM
-#from ddpm.text import tokenize, bert_embed, BERT_MODEL_DIM
+from ddpm.text import tokenize, bert_embed, BERT_MODEL_DIM
 from torch.utils.data import Dataset, DataLoader
-sys.path.append('vq_gan_3d/model')
-from vqgan import VQGAN
-#from vq_gan_3d.model.vqgan import VQGAN
+from vq_gan_3d.model.vqgan import VQGAN
 
 import matplotlib.pyplot as plt
 
@@ -1081,7 +1076,6 @@ class Trainer(object):
                 data = next(self.dl)['data'].cuda()
 
                 with autocast(enabled=self.amp):
-                    print(data.shape)
                     loss = self.model(
                         data,
                         prob_focus_present=prob_focus_present,

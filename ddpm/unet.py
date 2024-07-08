@@ -1,4 +1,7 @@
-from ddpm.time_embedding import TimeEmbbeding
+import sys
+sys.path.append('ddpm')
+from time_embedding import TimeEmbbeding
+#from ddpm.time_embedding import TimeEmbbeding
 
 import monai.networks.nets as nets
 import torch

@@ -138,6 +138,11 @@ __pycache__/
 lightning_logs/
 .ipynb_checkpoints/
 *.mp4
+*.gif
+*.png
+*.jpg
+*.pt
+*.db
 *.egg-info
 jobs
 core

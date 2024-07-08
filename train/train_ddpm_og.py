@@ -1,28 +1,21 @@
 from re import I
-import sys
-sys.path.append('ddpm')
-from diffusion import Unet3D, GaussianDiffusion, Trainer
-from unet import UNet
-#from ddpm import Unet3D, GaussianDiffusion, Trainer
-#sys.path.append('data')
-#from dataset import MRNetDataset, BRATSDataset
-
+from ddpm import Unet3D, GaussianDiffusion, Trainer
+from dataset import MRNetDataset, BRATSDataset
 import argparse
 import wandb
 import hydra
 from omegaconf import DictConfig, OmegaConf, open_dict
-sys.path.append('train')
-from get_dataset import get_dataset
+from train.get_dataset import get_dataset
 import torch
 import os
-#from ddpm.unet import UNet
+from ddpm.unet import UNet
 
 
 # NCCL_P2P_DISABLE=1 accelerate launch train/train_ddpm.py
 
 @hydra.main(config_path='../config', config_name='base_cfg', version_base=None)
 def run(cfg: DictConfig):
-    #torch.cuda.set_device(cfg.model.gpus)
+    torch.cuda.set_device(cfg.model.gpus)
     with open_dict(cfg):
         cfg.model.results_folder = os.path.join(
             cfg.model.results_folder, cfg.dataset.name, cfg.model.results_folder_postfix)

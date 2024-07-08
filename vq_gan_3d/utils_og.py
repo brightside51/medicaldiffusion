@@ -119,8 +119,7 @@ def adopt_weight(global_step, threshold=0, value=0.):
     return weight
 
 
-def save_video_grid(video, fname, writer, i = 0, nrow=None, fps=6):
-#def save_video_grid(video, fname, nrow=None, fps=6):
+def save_video_grid(video, fname, nrow=None, fps=6):
     b, c, t, h, w = video.shape
     video = video.permute(0, 2, 3, 4, 1)
     video = (video.cpu().numpy() * 255).astype('uint8')
@@ -139,10 +138,7 @@ def save_video_grid(video, fname, writer, i = 0, nrow=None, fps=6):
     video = []
     for i in range(t):
         video.append(video_grid[i])
-    
-    writer.add_video(   'Generated Images', np.expand_dims(video_grid.swapaxes(1, 3).repeat(3, 1), 0),
-                                        global_step = i, fps = 4, walltime = None)
-    #imageio.mimsave(fname, video, fps=fps)
+    imageio.mimsave(fname, video, fps=fps)
     ## skvideo.io.vwrite(fname, video_grid, inputdict={'-r': '5'})
     #print('saved videos to', fname)
 

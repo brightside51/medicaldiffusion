@@ -1,5 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. All Rights Reserved
 
+import sys
 import os
 import numpy as np
 from PIL import Image
@@ -7,9 +8,13 @@ from PIL import Image
 import torch
 import torchvision
 from pytorch_lightning.callbacks import Callback
-from pytorch_lightning.utilities.distributed import rank_zero_only
+from pytorch_lightning.utilities.rank_zero import rank_zero_only
+#from pytorch_lightning.utilities.distributed import rank_zero_only
+from torch.utils.tensorboard import SummaryWriter
 
-from vq_gan_3d.utils import save_video_grid
+sys.path.append('vq_gan_3d')
+from utils import save_video_grid
+#from vq_gan_3d.utils import save_video_grid
 
 
 class ImageLogger(Callback):
@@ -84,10 +89,12 @@ class ImageLogger(Callback):
             return True
         return False
 
-    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx):
+    #def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx):
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         self.log_img(pl_module, batch, batch_idx, split="train")
 
-    def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx):
+    #def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx):
+    def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         self.log_img(pl_module, batch, batch_idx, split="val")
 
 
@@ -101,6 +108,7 @@ class VideoLogger(Callback):
         if not increase_log_steps:
             self.log_steps = [self.batch_freq]
         self.clamp = clamp
+        self.video_writer = SummaryWriter(log_dir = f"../../video_logs"); self.i = 0
 
     @rank_zero_only
     def log_local(self, save_dir, split, videos,
@@ -123,7 +131,8 @@ class VideoLogger(Callback):
                 batch_idx)
             path = os.path.join(root, filename)
             os.makedirs(os.path.split(path)[0], exist_ok=True)
-            save_video_grid(grid, path)
+            #save_video_grid(grid, path)
+            save_video_grid(grid, path, self.video_writer, self.i); self.i += 1
 
     def log_vid(self, pl_module, batch, batch_idx, split="train"):
         # print(batch_idx, self.batch_freq, self.check_frequency(batch_idx) and hasattr(pl_module, "log_videos") and callable(pl_module.log_videos) and self.max_videos > 0)
@@ -163,8 +172,10 @@ class VideoLogger(Callback):
             return True
         return False
 
-    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx):
+    #def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx):
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         self.log_vid(pl_module, batch, batch_idx, split="train")
 
-    def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx):
+    #def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx):
+    def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         self.log_vid(pl_module, batch, batch_idx, split="val")

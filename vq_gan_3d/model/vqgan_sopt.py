@@ -55,8 +55,7 @@ class VQGAN(pl.LightningModule):
         self.cfg = cfg
         self.embedding_dim = cfg.model.embedding_dim
         self.n_codes = cfg.model.n_codes
-        self.automatic_optimization = False
-        self.optimizer_idx = 1
+        #self.automatic_optimization = False
 
         self.encoder = Encoder(cfg.model.n_hiddens, cfg.model.downsample,
                                cfg.dataset.image_channels, cfg.model.norm_type, cfg.model.padding_type,
@@ -231,30 +230,26 @@ class VQGAN(pl.LightningModule):
             frames, frames_recon) * self.perceptual_weight
         return recon_loss, x_recon, vq_output, perceptual_loss
 
-    #def training_step(self, batch, batch_idx, optimizer_idx):
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch, batch_idx, optimizer_idx):
         x = batch['data']
-        opt1, opt2 = self.optimizers()
-        if self.optimizer_idx == 0:
-            #recon_loss, _, vq_output, aeloss, perceptual_loss, gan_feat_loss = self.forward(x, optimizer_idx)
-            recon_loss, _, vq_output, aeloss, perceptual_loss, gan_feat_loss = self.forward(x, self.optimizer_idx)
+        #opt1, opt2 = self.optimizers()
+        if optimizer_idx == 0:
+            recon_loss, _, vq_output, aeloss, perceptual_loss, gan_feat_loss = self.forward(
+                x, optimizer_idx)
             commitment_loss = vq_output['commitment_loss']
-            self.optimizer_idx = 1
             loss = recon_loss + commitment_loss + aeloss + perceptual_loss + gan_feat_loss
-            opt1.zero_grad(); self.manual_backward(loss); opt1.step()
-        if self.optimizer_idx == 1:
-            #discloss = self.forward(x, optimizer_idx)
-            discloss = self.forward(x, self.optimizer_idx)
+            #opt1.zero_grad(); self.manual_backward(loss); opt1.step()
+        if optimizer_idx == 1:
+            discloss = self.forward(x, optimizer_idx)
             loss = discloss
-            self.optimizer_idx = 0
-            opt2.zero_grad(); self.manual_backward(loss); opt2.step()
+            #opt2.zero_grad(); self.manual_backward(loss); opt2.step()
         return loss
 
     def validation_step(self, batch, batch_idx):
         x = batch['data']  # TODO: batch['stft']
         recon_loss, _, vq_output, perceptual_loss = self.forward(x)
         self.log('val/recon_loss', recon_loss, prog_bar=True)
-        self.log('val/perceptual_loss', perceptual_loss.mean(), prog_bar=True)
+        self.log('val/perceptual_loss', perceptual_loss, prog_bar=True)
         self.log('val/perplexity', vq_output['perplexity'], prog_bar=True)
         self.log('val/commitment_loss',
                  vq_output['commitment_loss'], prog_bar=True)

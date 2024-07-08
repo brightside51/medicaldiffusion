@@ -2,13 +2,15 @@
 # Copyright (c) Meta Platforms, Inc. All Rights Reserved
 
 import numpy as np
-
+import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributed as dist
 
-from vq_gan_3d.utils import shift_dim
+sys.path.append('vq_gan_3d')
+from utils import shift_dim
+#from vq_gan_3d.utils import shift_dim
 
 
 class Codebook(nn.Module):
