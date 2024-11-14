@@ -22,10 +22,12 @@ from einops_exts import check_shape, rearrange_many
 from rotary_embedding_torch import RotaryEmbedding
 
 sys.path.append('ddpm')
+sys.path.append('../ddpm')
 from text import tokenize, bert_embed, BERT_MODEL_DIM
 #from ddpm.text import tokenize, bert_embed, BERT_MODEL_DIM
 from torch.utils.data import Dataset, DataLoader
 sys.path.append('vq_gan_3d/model')
+sys.path.append('../vq_gan_3d/model')
 from vqgan import VQGAN
 #from vq_gan_3d.model.vqgan import VQGAN
 
@@ -627,6 +629,7 @@ class GaussianDiffusion(nn.Module):
         self.num_frames = num_frames
         self.denoise_fn = denoise_fn
 
+        print(vqgan_ckpt)
         if vqgan_ckpt:
             self.vqgan = VQGAN.load_from_checkpoint(vqgan_ckpt).cuda()
             self.vqgan.eval()

@@ -35,7 +35,7 @@ class DEFAULTDataset(Dataset):
         elif self.dataset == 'lung': self.data_folderpath = self.settings.lung_data_folderpath
         elif self.dataset == 'private': self.data_folderpath = self.settings.private_data_folderpath
         else: print("ERROR: Chosen Dataset / Directory does not exist!")
-        
+
         # Subject Indexing (Existing or New Version)
         subj_listpath = Path(f"{self.settings.reader_folderpath}/V{self.settings.data_version}" +\
                              f"/{self.dataset}_{self.mode}_setV{self.settings.data_version}.txt")
@@ -192,5 +192,6 @@ class DEFAULTDataset(Dataset):
                 torchvision.io.write_video(f"{self.data_folderpath}/video_data/V{self.settings.data_version}/{self.mode}/{subj_idx}.mp4",
                     (img_data.unsqueeze(3).repeat(1, 1, 1, 3) * 255).type(torch.uint8), fps = self.settings.num_fps)
         else: raise(NotImplementedError)
+        print(img_data.unsqueeze(0).shape)
         return {'data': img_data.unsqueeze(0)}
     

@@ -90,6 +90,7 @@ def run(cfg: DictConfig):
 
     trainer = pl.Trainer(
         #gpus=cfg.model.gpus,
+        num_sanity_val_steps = 0,
         accumulate_grad_batches=cfg.model.accumulate_grad_batches,
         default_root_dir=cfg.model.default_root_dir,
         #resume_from_checkpoint=cfg.model.resume_from_checkpoint,

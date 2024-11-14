@@ -36,8 +36,8 @@ if True:
 
     # Directories and Path Arguments
     ncdiff_parser.add_argument('--reader_folderpath', type = str,         # Path for Dataset Reader Directory
-                                #default = 'dataset')
-                                default = "X:/nas-ctm01/homes/pfsousa/MedDiff/dataset")
+                                default = 'dataset')
+                                #default = "X:/nas-ctm01/homes/pfsousa/MedDiff/dataset")
     ncdiff_parser.add_argument('--public_data_folderpath', type = str,    # Path for Private Dataset Directory
                                 #default = "X:/nas-ctm01/datasets/public/MEDICAL/Duke-Breast-Cancer-T1")
                                 default = "../../../datasets/public/MEDICAL/Duke-Breast-Cancer-T1")

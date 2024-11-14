@@ -14,8 +14,10 @@ import torch.nn.functional as F
 import torch.distributed as dist
 
 sys.path.append('vq_gan_3d')
+sys.path.append('../vq_gan_3d')
 from utils import shift_dim, adopt_weight, comp_getattr
 sys.path.append('vq_gan_3d/model')
+sys.path.append('../vq_gan_3d/model')
 from lpips import LPIPS
 from codebook import Codebook
 #from vq_gan_3d.utils import shift_dim, adopt_weight, comp_getattr
