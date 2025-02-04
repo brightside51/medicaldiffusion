@@ -50,16 +50,18 @@ def run(cfg: DictConfig):
     model = VQGAN(cfg)
 
     callbacks = []
-    callbacks.append(ModelCheckpoint(monitor='val/recon_loss',
-                     save_top_k=3, mode='min', filename='latest_checkpoint'))
+    callbacks.append(ModelCheckpoint(monitor='val/Recon Loss',
+                     save_top_k=1, mode='min', filename='latest_checkpoint_recon'))
+    callbacks.append(ModelCheckpoint(monitor='train/SSIM Index',
+                     save_top_k=1, mode='max', filename='latest_checkpoint_ssim'))
     callbacks.append(ModelCheckpoint(every_n_train_steps=3000,
-                     save_top_k=-1, filename='{epoch}-{step}-{train/recon_loss:.2f}'))
-    callbacks.append(ModelCheckpoint(every_n_train_steps=10000, save_top_k=-1,
-                     filename='{epoch}-{step}-10000-{train/recon_loss:.2f}'))
+                     save_top_k=-1, filename='{epoch}-{step}-{train/Recon Loss:.2f}'))
+    #callbacks.append(ModelCheckpoint(every_n_train_steps=10000, save_top_k=1,
+    #                 filename='{epoch}-{step}-10000-{train/Recon Loss:.2f}-{train/SSIM Index:.2f}'))
     callbacks.append(ImageLogger(
-        batch_frequency=750, max_images=4, clamp=True))
+        batch_frequency=10000, max_images=4, clamp=True))
     callbacks.append(VideoLogger(
-        batch_frequency=1500, max_videos=4, clamp=True))
+        batch_frequency=10000, max_videos=4, clamp=True))
 
     # load the most recent checkpoint file
     base_dir = os.path.join(cfg.model.default_root_dir, 'lightning_logs')
@@ -87,6 +89,9 @@ def run(cfg: DictConfig):
     accelerator = 'cuda'
     #if cfg.model.gpus > 1:
     #    accelerator = 'ddp'
+
+    if cfg.model.resume_from_checkpoint is not None:
+        vqgan = VQGAN.load_from_checkpoint(cfg.model.resume_from_checkpoint).cuda()
 
     trainer = pl.Trainer(
         #gpus=cfg.model.gpus,

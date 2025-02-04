@@ -18,6 +18,7 @@ from PIL import Image
 from tqdm import tqdm
 from einops import rearrange
 from einops_exts import check_shape, rearrange_many
+from pytorch_lightning.loggers import TensorBoardLogger
 
 from rotary_embedding_torch import RotaryEmbedding
 
@@ -83,9 +84,119 @@ def is_list_str(x):
         return False
     return all([type(el) == str for el in x])
 
+
+def gaussian_kernel(size: int, sigma: float):
+    """Creates a 3D Gaussian kernel."""
+    coords = torch.arange(size, dtype=torch.float32)
+    coords -= size // 2
+    g = torch.exp(-(coords**2) / (2 * sigma**2))
+    g /= g.sum()
+    kernel = g[:, None, None] * g[None, :, None] * g[None, None, :]
+    return kernel
+
+def _ssim_3d(img1, img2, kernel, size_average=True):
+    """Calculates the SSIM for 3D images."""
+    C1 = 0.01**2
+    C2 = 0.03**2
+
+    mu1 = F.conv3d(img1, kernel, padding=kernel.size(2)//2, groups=img1.size(1))
+    mu2 = F.conv3d(img2, kernel, padding=kernel.size(2)//2, groups=img2.size(1))
+    mu1_sq = mu1.pow(2)
+    mu2_sq = mu2.pow(2)
+    mu1_mu2 = mu1 * mu2
+
+    sigma1_sq = F.conv3d(img1 * img1, kernel, padding=kernel.size(2)//2, groups=img1.size(1)) - mu1_sq
+    sigma2_sq = F.conv3d(img2 * img2, kernel, padding=kernel.size(2)//2, groups=img2.size(1)) - mu2_sq
+    sigma12 = F.conv3d(img1 * img2, kernel, padding=kernel.size(2)//2, groups=img1.size(1)) - mu1_mu2
+
+    ssim_map = ((2 * mu1_mu2 + C1) * (2 * sigma12 + C2)) / ((mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2))
+
+    return ssim_map.mean() if size_average else ssim_map
+
+def MS_SSIM(img1, img2, levels=5, size_average=True):
+    """Calculates the Multi-Scale SSIM for 3D images."""
+    pad = torch.zeros(1, 128, 128).to(img1.device)
+    img1 = torch.concat([pad, img1[0, 0], pad]).unsqueeze(0).unsqueeze(0)
+    img2 = torch.concat([pad, img2[0, 0], pad]).unsqueeze(0).unsqueeze(0)
+    #print(f"Padding: {img1.shape}")
+    kernel = gaussian_kernel(size=11, sigma=1.5).unsqueeze(0).unsqueeze(0)
+    kernel = kernel.to(img1.device)
+    
+    mssim = []
+    weights = torch.FloatTensor([0.0448, 0.2856, 0.3001, 0.2363, 0.1333]).to(img1.device)
+
+    for _ in range(levels):
+        ssim = _ssim_3d(img1, img2, kernel, size_average)
+        mssim.append(ssim)
+
+        img1 = F.avg_pool3d(img1, kernel_size=2)
+        img2 = F.avg_pool3d(img2, kernel_size=2)
+
+    mssim = torch.stack(mssim)
+    return (mssim * weights).sum() if size_average else mssim
+
+def create_gaussian_window(window_size, sigma, channels):
+    """
+    Create a 3D Gaussian kernel.
+    Args:
+        window_size (int): Size of the Gaussian kernel (odd number).
+        sigma (float): Standard deviation of the Gaussian.
+        channels (int): Number of input channels.
+    Returns:
+        torch.Tensor: Gaussian kernel for 3D convolution.
+    """
+    coords = torch.arange(window_size, dtype=torch.float32) - window_size // 2
+    grid = torch.stack(torch.meshgrid(coords, coords, coords), dim=-1)
+    kernel = torch.exp(-torch.sum(grid**2, dim=-1) / (2 * sigma**2))
+    kernel = kernel / kernel.sum()  # Normalize kernel
+    kernel = kernel.view(1, 1, window_size, window_size, window_size)
+    return kernel.expand(channels, 1, -1, -1, -1)
+
+def SSIM(img1, img2, window_size=11, sigma=1.5, data_range=1.0):
+    """
+    Compute 3D Structural Similarity Index (SSIM) between two volumes.
+    Args:
+        img1 (torch.Tensor): First input tensor of shape (B, C, D, H, W).
+        img2 (torch.Tensor): Second input tensor of shape (B, C, D, H, W).
+        window_size (int): Size of the Gaussian kernel (odd number).
+        sigma (float): Standard deviation of the Gaussian kernel.
+        data_range (float): Maximum possible value in the data (e.g., 1.0 if normalized).
+    Returns:
+        torch.Tensor: Mean SSIM value over the batch.
+    """
+    assert img1.shape == img2.shape, "Input volumes must have the same shape!"
+    B, C, D, H, W = img1.shape
+    device = img1.device
+
+    # Create Gaussian kernel
+    kernel = create_gaussian_window(window_size, sigma, C).to(device)
+
+    # Compute means
+    mu1 = F.conv3d(img1, kernel, padding=window_size // 2, groups=C)
+    mu2 = F.conv3d(img2, kernel, padding=window_size // 2, groups=C)
+
+    # Compute variances and covariances
+    mu1_sq = mu1 ** 2
+    mu2_sq = mu2 ** 2
+    mu1_mu2 = mu1 * mu2
+
+    sigma1_sq = F.conv3d(img1 * img1, kernel, padding=window_size // 2, groups=C) - mu1_sq
+    sigma2_sq = F.conv3d(img2 * img2, kernel, padding=window_size // 2, groups=C) - mu2_sq
+    sigma12 = F.conv3d(img1 * img2, kernel, padding=window_size // 2, groups=C) - mu1_mu2
+
+    # Constants for numerical stability
+    C1 = (0.01 * data_range) ** 2
+    C2 = (0.03 * data_range) ** 2
+
+    # Compute SSIM map
+    ssim_map = ((2 * mu1_mu2 + C1) * (2 * sigma12 + C2)) / (
+        (mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2)
+    )
+
+    # Return mean SSIM over the batch
+    return ssim_map.mean()
+
 # relative positional bias
-
-
 class RelativePositionBias(nn.Module):
     def __init__(
         self,
@@ -630,11 +741,13 @@ class GaussianDiffusion(nn.Module):
         self.denoise_fn = denoise_fn
 
         print(vqgan_ckpt)
+        VQGAN.strict_loading = False
         if vqgan_ckpt:
-            self.vqgan = VQGAN.load_from_checkpoint(vqgan_ckpt).cuda()
+            self.vqgan = VQGAN.load_from_checkpoint(vqgan_ckpt, strict = False).cuda()
             self.vqgan.eval()
         else:
             self.vqgan = None
+        #self.vqgan.step
 
         betas = cosine_beta_schedule(timesteps)
 
@@ -777,13 +890,16 @@ class GaussianDiffusion(nn.Module):
         num_frames = self.num_frames
         _sample = self.p_sample_loop(
             (batch_size, channels, num_frames, image_size, image_size), cond=cond, cond_scale=cond_scale)
+        #print(f"Sample {_sample.shape}")
 
         if isinstance(self.vqgan, VQGAN):
             # denormalize TODO: Remove eventually
             _sample = (((_sample + 1.0) / 2.0) * (self.vqgan.codebook.embeddings.max() -
                                                   self.vqgan.codebook.embeddings.min())) + self.vqgan.codebook.embeddings.min()
-
+            #print(f"Sample {_sample.shape}")
             _sample = self.vqgan.decode(_sample, quantize=True)
+            #print(f"Sample {_sample.shape}")
+
         else:
             unnormalize_img(_sample)
 
@@ -828,24 +944,33 @@ class GaussianDiffusion(nn.Module):
 
         x_recon = self.denoise_fn(x_noisy, t, cond=cond, **kwargs)
 
-        if self.loss_type == 'l1':
-            loss = F.l1_loss(noise, x_recon)
-        elif self.loss_type == 'l2':
-            loss = F.mse_loss(noise, x_recon)
-        else:
-            raise NotImplementedError()
+        #if self.loss_type == 'l1':
+            #loss = F.l1_loss(noise, x_recon)
+        #elif self.loss_type == 'l2':
+            #loss = F.mse_loss(noise, x_recon)
+        #else:
+            #raise NotImplementedError()
+        #return loss
 
-        return loss
+        return {
+            'l1_loss': F.l1_loss(noise, x_recon),
+            'mse_loss': F.mse_loss(noise, x_recon),
+            'x_start': x_start,
+            'x_noisy': x_noisy,
+            'x_recon': x_recon
+            }
 
     def forward(self, x, *args, **kwargs):
         if isinstance(self.vqgan, VQGAN):
             with torch.no_grad():
                 x = self.vqgan.encode(
                     x, quantize=False, include_embeddings=True)
+                #print(f"X {x.shape}")
                 # normalize to -1 and 1
                 x = ((x - self.vqgan.codebook.embeddings.min()) /
                      (self.vqgan.codebook.embeddings.max() -
                       self.vqgan.codebook.embeddings.min())) * 2.0 - 1.0
+                #print(f"X {x.shape}")
         else:
             print("Hi")
             x = normalize_img(x)
@@ -975,11 +1100,11 @@ class Trainer(object):
         num_frames=16,
         train_batch_size=32,
         train_lr=1e-4,
-        train_num_steps=100000,
+        train_num_steps=200000,
         gradient_accumulate_every=2,
         amp=False,
         step_start_ema=2000,
-        update_ema_every=10,
+        update_ema_every=1,
         save_and_sample_every=1000,
         results_folder='./results',
         num_sample_rows=1,
@@ -1021,7 +1146,7 @@ class Trainer(object):
         assert len(
             self.ds) > 0, 'need to have at least 1 video to start training (although 1 is not great, try 100k)'
 
-        self.opt = Adam(diffusion_model.parameters(), lr=train_lr)
+        self.opt = Adam(diffusion_model.parameters(), lr=train_lr, betas=(0.9, 0.98))
 
         self.step = 0
 
@@ -1032,6 +1157,7 @@ class Trainer(object):
         self.num_sample_rows = num_sample_rows
         self.results_folder = Path(results_folder)
         self.results_folder.mkdir(exist_ok=True, parents=True)
+        self.train_logger = TensorBoardLogger(self.results_folder, 'train')
 
         self.reset_parameters()
 
@@ -1054,6 +1180,7 @@ class Trainer(object):
         torch.save(data, str(self.results_folder / f'model-{milestone}.pt'))
 
     def load(self, milestone, map_location=None, **kwargs):
+        print(milestone)
         if milestone == -1:
             all_milestones = [int(p.stem.split('-')[-1])
                               for p in Path(self.results_folder).glob('**/*.pt')]
@@ -1067,8 +1194,8 @@ class Trainer(object):
             data = torch.load(milestone)
 
         self.step = data['step']
-        self.model.load_state_dict(data['model'], **kwargs)
-        self.ema_model.load_state_dict(data['ema'], **kwargs)
+        self.model.load_state_dict(data['model'], strict = False, **kwargs)
+        self.ema_model.load_state_dict(data['ema'], strict = False, **kwargs)
         self.scaler.load_state_dict(data['scaler'])
 
     def train(
@@ -1078,30 +1205,132 @@ class Trainer(object):
         log_fn=noop
     ):
         assert callable(log_fn)
+        self.wave_prev = False
 
+        print(f"Max Steps: {self.train_num_steps}")
         while self.step < self.train_num_steps:
+
+            if self.step <= 10000 or (self.step > 11000 and self.step <= 21000) or (self.step > 22000 and self.step <= 32000) or (self.step > 33000 and self.step <= 43000) or (self.step > 44000 and self.step <= 54000):
+            #if (self.step <= 10000 and self.step % 50 == 0) or (self.step > 10000 and self.step <= 20000 and self.step % 20 == 0):
+                wave = True
+            else: wave = False
+            wave = True
+            if self.wave_prev != wave:
+                print(f"Changing Loss Method at Step #{self.step}")
+            self.wave_prev = wave
+            final_loss = 0
+
             for i in range(self.gradient_accumulate_every):
                 data = next(self.dl)['data'].cuda()
 
                 with autocast(enabled=self.amp):
-                    print(data.shape)
-                    loss = self.model(
+                    #print(data.shape)
+                    losses = self.model(
                         data,
                         prob_focus_present=prob_focus_present,
-                        focus_present_mask=focus_present_mask
-                    )
+                        focus_present_mask=focus_present_mask)
 
-                    self.scaler.scale(
-                        loss / self.gradient_accumulate_every).backward()
+                    loss = losses['l1_loss']
 
-                print(f'{self.step}: {loss.item()}')
+                    # WIP
+                    #print(f"X_Start {losses['x_start'].shape}")
+                    #print(f"X_Recon {losses['x_recon'].shape}")
+                    #img_start = self.model.vqgan.decode(losses['x_start'], quantize=True).detach().cpu()
+                    img_recon = self.model.vqgan.decode(losses['x_recon'], quantize=True).detach().cpu()
+                    #recon_loss = F.mse_loss(img_recon, img_start)
+                    recon_loss = F.mse_loss(img_recon, data)
+                    logits_fake, pred_fake = self.model.vqgan.video_discriminator(all_videos_list[0])
+                    logits_real, pred_real = self.model.vqgan.video_discriminator(data[0].unsqueeze(0))
+                    disc_loss = self.model.vqgan.disc_loss(logits_real, logits_fake)
+                    
+                    #print(f"Img_Start {img_start.shape}")
+                    #print(f"Img_Recon {img_recon.shape}")
+                    #self.train_logger.experiment.add_image("Start Image", img_start[0, :, 15], self.step)
+                    #self.train_logger.experiment.add_image("Recon Image", img_recon[0, :, 15], self.step)
+                    
+                    #if self.step < (self.train_num_steps / 4) or (self.step >= (self.train_num_steps / 2) and self.step < (3 * self.train_num_steps / 4)):
+                        #final_loss = loss / self.gradient_accumulate_every
+                    #else: final_loss = 0.2 * (loss / self.gradient_accumulate_every)
+                    #if int(self.step // 10000) % 2 == 0: 
+                    if wave:
+                        #final_loss += loss / self.gradient_accumulate_every
+                        #self.scaler.scale(loss / self.gradient_accumulate_every)
+                        self.scaler.scale(recon_loss / self.gradient_accumulate_every)
+                    #else:
+                        #self.scaler.scale(1 - 
+                    #final_loss += 0.2 * (loss / self.gradient_accumulate_every)
 
-            log = {'loss': loss.item()}
+                #print(f'{self.step}: {loss.item()}')
 
-            if exists(self.max_grad_norm):
+            log = {'l1_loss': losses['l1_loss'].item(),
+                   'mse_loss': losses['mse_loss'].item()}
+            self.train_logger.experiment.add_scalar("Train/L1 Loss", losses['l1_loss'].item(), self.step)
+            self.train_logger.experiment.add_scalar("Train/MSE Loss", losses['mse_loss'].item(), self.step)
+            self.train_logger.experiment.add_scalar("Train/Recon Loss", recon_loss, self.step)
+            
+
+            for p in self.model.parameters():
+                if p.grad is not None and self.max_grad_norm is not None:
+                    print(torch.norm(p.grad))
+            if exists(self.max_grad_norm) and wave:
                 self.scaler.unscale_(self.opt)
                 nn.utils.clip_grad_norm_(
                     self.model.parameters(), self.max_grad_norm)
+
+            #WIP
+            #if not wave:
+            if True and self.step % 10 == 0:
+                with torch.no_grad():
+                    all_videos_list = list(
+                        map(lambda n: self.ema_model.sample(batch_size=1), num_to_groups(1, 1)))
+                    
+                    logits_fake, pred_fake = self.model.vqgan.video_discriminator(all_videos_list[0])
+                    logits_real, pred_real = self.model.vqgan.video_discriminator(data[0].unsqueeze(0))
+                    disc_loss = self.model.vqgan.disc_loss(logits_real, logits_fake)
+
+                    """
+                    print(self.model.vqgan.decoder.conv_blocks)
+                    #print(self.model.vqgan.decoder.conv_blocks.layer1[0])
+                    feats_fake = all_videos_list[0]; feats_real = data[0].unsqueeze(0)
+                    #for name, layer in self.model.vqgan.decoder.conv_blocks.named_modules():
+                    for i, layer in enumerate(self.model.vqgan.decoder.conv_blocks):
+                        print(i, layer)
+                        feats_fake = layer(feats_fake); feats_real = layer(feats_real)
+                        if name == "0.res1.conv2.conv": feats_fake1 = feats_fake; feats_real1 = feats_real
+                    feat_loss1 = F.mse_loss(feats_fake1, feats_real1)
+                    feat_loss2 = F.mse_loss(feats_fake, feats_real)
+                    print(feat_loss1); print(feat_loss2)
+                    """
+                    
+                    """
+                    log = { 
+                        "ms_ssim": MS_SSIM(all_videos_list[0], data[0].unsqueeze(0)),
+                        "ssim": SSIM(all_videos_list[0], data[0].unsqueeze(0)),
+                        "disc/logits_real": logits_real, "disc/logits_fake": logits_fake,
+                        "disc/pred_real": pred_real, "disc/pred_fake": pred_fake,
+                        "disc/loss": disc_loss}
+                    """
+
+                    ssim_loss = 0; msssim_loss = 0
+                    for i in range(len(all_videos_list)):
+                        for j in range(data.shape[0]):
+                            ssim_loss += SSIM(all_videos_list[i], data[j].unsqueeze(0))
+                            msssim_loss += MS_SSIM(all_videos_list[i], data[j].unsqueeze(0))
+                    ssim_loss = torch.Tensor(ssim_loss / (len(all_videos_list) * data.shape[0]))
+                    msssim_loss = torch.Tensor(msssim_loss / (len(all_videos_list) * data.shape[0]))
+
+                    #final_loss += (0.4 * torch.pow(1- ssim_loss, 2)) + (0.4 * disc_loss)
+                    #print(f"Step #{self.step}: {final_loss}")
+
+                    self.train_logger.experiment.add_scalar("Sampling/MS-SSIM Index", msssim_loss, self.step)
+                    self.train_logger.experiment.add_scalar("Sampling/SSIM Index", ssim_loss, self.step)
+                    #self.train_logger.experiment.add_scalar("Real Logits", logits_real.mean().detach(), self.step)
+                    #self.train_logger.experiment.add_scalar("Fake Logits", logits_fake.mean().detach(), self.step)
+                    #self.train_logger.experiment.add_scalar("Feature Loss 1", feat_loss1, self.step)
+                    #self.train_logger.experiment.add_scalar("Feature Loss 2", feat_loss2, self.step)
+                    #self.train_logger.experiment.add_scalar("Final Loss", final_loss, self.step)
+                    self.train_logger.experiment.add_scalar("Sampling/Discriminator Loss", disc_loss, self.step)
+                #self.scaler.scale(torch.autograd.Variable(disc_loss, requires_grad = True))
 
             self.scaler.step(self.opt)
             self.scaler.update()
@@ -1130,13 +1359,14 @@ class Trainer(object):
                 video_tensor_to_gif(one_gif, video_path)
                 log = {**log, 'sample': video_path}
 
+                """
                 # Selects one random 2D image from each 3D Image
                 B, C, D, H, W = all_videos_list.shape
                 frame_idx = torch.randint(0, D, [B]).cuda()
                 frame_idx_selected = frame_idx.reshape(
                     -1, 1, 1, 1, 1).repeat(1, C, 1, H, W)
-                frames = torch.gather(
-                    all_videos_list, 2, frame_idx_selected).squeeze(2)
+                #frames = torch.gather(
+                #    all_videos_list, 2, frame_idx_selected).squeeze(2)
 
                 path = str(self.results_folder /
                            f'sample-{milestone}.jpg')
@@ -1148,6 +1378,7 @@ class Trainer(object):
                     plt.axis('off')
                     plt.imshow(frame[0], cmap='gray')
                     plt.savefig(path)
+                """
 
                 self.save(milestone)
 

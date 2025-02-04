@@ -157,6 +157,8 @@ cache/
 outputs/
 
 .vscode/
+*.0
+*.1
 
 
 

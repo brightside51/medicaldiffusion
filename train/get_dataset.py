@@ -29,15 +29,15 @@ if True:
     ncdiff_parser.add_argument('--model_version', type = int,         # Model Version Index
                                 default = 2)
     ncdiff_parser.add_argument('--data_version', type = int,          # Dataset Version Index
-                                default = 2)
+                                default = 4)
     settings = ncdiff_parser.parse_args("")
 
     # ============================================================================================
 
     # Directories and Path Arguments
     ncdiff_parser.add_argument('--reader_folderpath', type = str,         # Path for Dataset Reader Directory
-                                #default = 'dataset')
-                                default = "X:/nas-ctm01/homes/pfsousa/MedDiff/dataset")
+                                default = '../../pfsousa/MedDiff/dataset')
+                                #default = "X:/nas-ctm01/homes/pfsousa/MedDiff/dataset")
     ncdiff_parser.add_argument('--public_data_folderpath', type = str,    # Path for Private Dataset Directory
                                 #default = "X:/nas-ctm01/datasets/public/MEDICAL/Duke-Breast-Cancer-T1")
                                 default = "../../../datasets/public/MEDICAL/Duke-Breast-Cancer-T1")
@@ -63,7 +63,7 @@ if True:
     # Dataset | Dataset General Arguments
     ncdiff_parser.add_argument('--data_format', type = str,           # Chosen Dataset Format for Reading
                                 choices =  {'mp4', 'dicom'},
-                                default = 'dicom')
+                                default = 'mp4')
     ncdiff_parser.add_argument('--img_size', type = int,              # Generated Image Resolution
                                 default = 128)
     ncdiff_parser.add_argument('--num_slice', type = int,             # Number of 2D Slices in MRI
@@ -95,7 +95,7 @@ if True:
     ncdiff_parser.add_argument('--shuffle', type = bool,              # DataLoader Subject Shuffling Control Value
                                 default = True)
     ncdiff_parser.add_argument('--num_workers', type = int,           # Number of DataLoader Workers
-                                default = 8)
+                                default = 12)
     ncdiff_parser.add_argument('--prefetch_factor', type = int,       # Number of Prefetched DataLoader Batches per Worker
                                 default = 1)
 

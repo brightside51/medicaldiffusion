@@ -156,7 +156,7 @@ class DEFAULTDataset(Dataset):
                         img_slice = np.array(self.transform(img_slice))
                     img_data[slice_idx, :, :] = torch.Tensor(img_slice); del img_slice
                 else: subj_filelist.remove(slice_filepath)
-            print(f"Accessing Subject {subj_idx}: {len(subj_filelist)} -> {self.settings.num_slice} Slices")
+            #print(f"Accessing Subject {subj_idx}: {len(subj_filelist)} -> {self.settings.num_slice} Slices")
             img_data = img_data[np.sort(slice_list)]
 
             # --------------------------------------------------------------------------------------------
@@ -192,6 +192,6 @@ class DEFAULTDataset(Dataset):
                 torchvision.io.write_video(f"{self.data_folderpath}/video_data/V{self.settings.data_version}/{self.mode}/{subj_idx}.mp4",
                     (img_data.unsqueeze(3).repeat(1, 1, 1, 3) * 255).type(torch.uint8), fps = self.settings.num_fps)
         else: raise(NotImplementedError)
-        print(img_data.unsqueeze(0).shape)
+        #print(img_data.unsqueeze(0).shape)
         return {'data': img_data.unsqueeze(0)}
     

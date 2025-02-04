@@ -25,6 +25,114 @@ from codebook import Codebook
 #from vq_gan_3d.model.codebook import Codebook
 
 
+def gaussian_kernel(size: int, sigma: float):
+    """Creates a 3D Gaussian kernel."""
+    coords = torch.arange(size, dtype=torch.float32)
+    coords -= size // 2
+    g = torch.exp(-(coords**2) / (2 * sigma**2))
+    g /= g.sum()
+    kernel = g[:, None, None] * g[None, :, None] * g[None, None, :]
+    return kernel
+
+def _ssim_3d(img1, img2, kernel, size_average=True):
+    """Calculates the SSIM for 3D images."""
+    C1 = 0.01**2
+    C2 = 0.03**2
+
+    mu1 = F.conv3d(img1, kernel, padding=kernel.size(2)//2, groups=img1.size(1))
+    mu2 = F.conv3d(img2, kernel, padding=kernel.size(2)//2, groups=img2.size(1))
+    mu1_sq = mu1.pow(2)
+    mu2_sq = mu2.pow(2)
+    mu1_mu2 = mu1 * mu2
+
+    sigma1_sq = F.conv3d(img1 * img1, kernel, padding=kernel.size(2)//2, groups=img1.size(1)) - mu1_sq
+    sigma2_sq = F.conv3d(img2 * img2, kernel, padding=kernel.size(2)//2, groups=img2.size(1)) - mu2_sq
+    sigma12 = F.conv3d(img1 * img2, kernel, padding=kernel.size(2)//2, groups=img1.size(1)) - mu1_mu2
+
+    ssim_map = ((2 * mu1_mu2 + C1) * (2 * sigma12 + C2)) / ((mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2))
+
+    return ssim_map.mean() if size_average else ssim_map
+
+def MS_SSIM(img1, img2, levels=5, size_average=True):
+    """Calculates the Multi-Scale SSIM for 3D images."""
+    kernel = gaussian_kernel(size=11, sigma=1.5).unsqueeze(0).unsqueeze(0)
+    kernel = kernel.to(img1.device)
+    
+    mssim = []
+    weights = torch.FloatTensor([0.0448, 0.2856, 0.3001, 0.2363, 0.1333]).to(img1.device)
+
+    for _ in range(levels):
+        ssim = _ssim_3d(img1, img2, kernel, size_average)
+        mssim.append(ssim)
+
+        img1 = F.avg_pool3d(img1, kernel_size=2)
+        img2 = F.avg_pool3d(img2, kernel_size=2)
+
+    mssim = torch.stack(mssim)
+    return (mssim * weights).sum() if size_average else mssim
+
+def create_gaussian_window(window_size, sigma, channels):
+    """
+    Create a 3D Gaussian kernel.
+    Args:
+        window_size (int): Size of the Gaussian kernel (odd number).
+        sigma (float): Standard deviation of the Gaussian.
+        channels (int): Number of input channels.
+    Returns:
+        torch.Tensor: Gaussian kernel for 3D convolution.
+    """
+    coords = torch.arange(window_size, dtype=torch.float32) - window_size // 2
+    grid = torch.stack(torch.meshgrid(coords, coords, coords), dim=-1)
+    kernel = torch.exp(-torch.sum(grid**2, dim=-1) / (2 * sigma**2))
+    kernel = kernel / kernel.sum()  # Normalize kernel
+    kernel = kernel.view(1, 1, window_size, window_size, window_size)
+    return kernel.expand(channels, 1, -1, -1, -1)
+
+def SSIM(img1, img2, window_size=7, sigma=1.5, data_range=1.0):
+    """
+    Compute 3D Structural Similarity Index (SSIM) between two volumes.
+    Args:
+        img1 (torch.Tensor): First input tensor of shape (B, C, D, H, W).
+        img2 (torch.Tensor): Second input tensor of shape (B, C, D, H, W).
+        window_size (int): Size of the Gaussian kernel (odd number).
+        sigma (float): Standard deviation of the Gaussian kernel.
+        data_range (float): Maximum possible value in the data (e.g., 1.0 if normalized).
+    Returns:
+        torch.Tensor: Mean SSIM value over the batch.
+    """
+    assert img1.shape == img2.shape, "Input volumes must have the same shape!"
+    B, C, D, H, W = img1.shape
+    device = img1.device
+
+    # Create Gaussian kernel
+    kernel = create_gaussian_window(window_size, sigma, C).to(device)
+
+    # Compute means
+    mu1 = F.conv3d(img1, kernel, padding=window_size // 2, groups=C)
+    mu2 = F.conv3d(img2, kernel, padding=window_size // 2, groups=C)
+
+    # Compute variances and covariances
+    mu1_sq = mu1 ** 2
+    mu2_sq = mu2 ** 2
+    mu1_mu2 = mu1 * mu2
+
+    sigma1_sq = F.conv3d(img1 * img1, kernel, padding=window_size // 2, groups=C) - mu1_sq
+    sigma2_sq = F.conv3d(img2 * img2, kernel, padding=window_size // 2, groups=C) - mu2_sq
+    sigma12 = F.conv3d(img1 * img2, kernel, padding=window_size // 2, groups=C) - mu1_mu2
+
+    # Constants for numerical stability
+    C1 = (0.01 * data_range) ** 2
+    C2 = (0.03 * data_range) ** 2
+
+    # Compute SSIM map
+    ssim_map = ((2 * mu1_mu2 + C1) * (2 * sigma12 + C2)) / (
+        (mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2)
+    )
+
+    # Return mean SSIM over the batch
+    return ssim_map.mean()
+
+
 def silu(x):
     return x*torch.sigmoid(x)
 
@@ -122,8 +230,10 @@ class VQGAN(pl.LightningModule):
         vq_output = self.codebook(z)
         x_recon = self.decoder(self.post_vq_conv(vq_output['embeddings']))
 
+        #print(f"X Recon: {x_recon.shape}")
+        #print(f"X: {x.shape}")
         recon_loss = F.l1_loss(x_recon, x) * self.l1_weight
-
+        
         # Selects one random 2D image from each 3D Image
         frame_idx = torch.randint(0, T, [B]).cuda()
         frame_idx_selected = frame_idx.reshape(-1,
@@ -142,6 +252,10 @@ class VQGAN(pl.LightningModule):
             if self.perceptual_weight > 0:
                 perceptual_loss = self.perceptual_model(
                     frames, frames_recon).mean() * self.perceptual_weight
+                
+            # SSIM Index
+            #msssim_loss = MS_SSIM(x_recon, x)
+            ssim_loss = SSIM(x_recon, x)
 
             # Discriminator loss (turned on after a certain epoch)
             logits_image_fake, pred_image_fake = self.image_discriminator(
@@ -176,23 +290,27 @@ class VQGAN(pl.LightningModule):
             gan_feat_loss = disc_factor * self.gan_feat_weight * \
                 (image_gan_feat_loss + video_gan_feat_loss)
 
-            self.log("train/g_image_loss", g_image_loss,
+            self.log("train/Gen Img Loss", g_image_loss,
                      logger=True, on_step=True, on_epoch=True)
-            self.log("train/g_video_loss", g_video_loss,
+            self.log("train/Gen Vid Loss", g_video_loss,
                      logger=True, on_step=True, on_epoch=True)
-            self.log("train/image_gan_feat_loss", image_gan_feat_loss,
+            self.log("train/GAN Img Loss", image_gan_feat_loss,
                      logger=True, on_step=True, on_epoch=True)
-            self.log("train/video_gan_feat_loss", video_gan_feat_loss,
+            self.log("train/GAN Vid Loss", video_gan_feat_loss,
                      logger=True, on_step=True, on_epoch=True)
-            self.log("train/perceptual_loss", perceptual_loss,
+            self.log("train/Percept Loss", perceptual_loss,
                      prog_bar=True, logger=True, on_step=True, on_epoch=True)
-            self.log("train/recon_loss", recon_loss, prog_bar=True,
+            self.log("train/Recon Loss", recon_loss, prog_bar=True,
                      logger=True, on_step=True, on_epoch=True)
-            self.log("train/aeloss", aeloss, prog_bar=True,
+            self.log("train/AE Loss", aeloss, prog_bar=True,
                      logger=True, on_step=True, on_epoch=True)
-            self.log("train/commitment_loss", vq_output['commitment_loss'],
+            self.log("train/SSIM Index", ssim_loss, prog_bar=True,
+                     logger=True, on_step=True, on_epoch=True)
+            #self.log("train/MS-SSIM Index", msssim_loss, prog_bar=True,
+            #         logger=True, on_step=True, on_epoch=True)
+            self.log("train/Commit Loss", vq_output['commitment_loss'],
                      prog_bar=True, logger=True, on_step=True, on_epoch=True)
-            self.log('train/perplexity', vq_output['perplexity'],
+            self.log('train/Perplexity', vq_output['perplexity'],
                      prog_bar=True, logger=True, on_step=True, on_epoch=True)
             return recon_loss, x_recon, vq_output, aeloss, perceptual_loss, gan_feat_loss
 
@@ -213,19 +331,19 @@ class VQGAN(pl.LightningModule):
                 (self.image_gan_weight*d_image_loss +
                  self.video_gan_weight*d_video_loss)
 
-            self.log("train/logits_image_real", logits_image_real.mean().detach(),
+            self.log("train_logits/Real Img", logits_image_real.mean().detach(),
                      logger=True, on_step=True, on_epoch=True)
-            self.log("train/logits_image_fake", logits_image_fake.mean().detach(),
+            self.log("train_logits/Fake Img", logits_image_fake.mean().detach(),
                      logger=True, on_step=True, on_epoch=True)
-            self.log("train/logits_video_real", logits_video_real.mean().detach(),
+            self.log("train_logits/Real Vid", logits_video_real.mean().detach(),
                      logger=True, on_step=True, on_epoch=True)
-            self.log("train/logits_video_fake", logits_video_fake.mean().detach(),
+            self.log("train_logits/Fake Vid", logits_video_fake.mean().detach(),
                      logger=True, on_step=True, on_epoch=True)
-            self.log("train/d_image_loss", d_image_loss,
+            self.log("train_logits/D Img Loss", d_image_loss,
                      logger=True, on_step=True, on_epoch=True)
-            self.log("train/d_video_loss", d_video_loss,
+            self.log("train_logits/D Vid Loss", d_video_loss,
                      logger=True, on_step=True, on_epoch=True)
-            self.log("train/discloss", discloss, prog_bar=True,
+            self.log("train_logits/Disc Loss", discloss, prog_bar=True,
                      logger=True, on_step=True, on_epoch=True)
             return discloss
 
@@ -255,10 +373,10 @@ class VQGAN(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         x = batch['data']  # TODO: batch['stft']
         recon_loss, _, vq_output, perceptual_loss = self.forward(x)
-        self.log('val/recon_loss', recon_loss, prog_bar=True)
-        self.log('val/perceptual_loss', perceptual_loss.mean(), prog_bar=True)
-        self.log('val/perplexity', vq_output['perplexity'], prog_bar=True)
-        self.log('val/commitment_loss',
+        self.log('val/Recon Loss', recon_loss, prog_bar=True)
+        self.log('val/Percept Loss', perceptual_loss.mean(), prog_bar=True)
+        self.log('val/Perplexity', vq_output['perplexity'], prog_bar=True)
+        self.log('val/Commit Loss',
                  vq_output['commitment_loss'], prog_bar=True)
 
     def configure_optimizers(self):

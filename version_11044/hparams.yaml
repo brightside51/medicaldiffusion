@@ -1,0 +1,41 @@
+cfg:
+  dataset:
+    name: DEFAULT
+    root_dir: ../../../../nas-ctm01/datasets/private/METABREST/T1W_Breast/video_data
+    image_channels: 1
+  model:
+    seed: 1234
+    batch_size: 2
+    num_workers: 12
+    gpus: 1
+    accumulate_grad_batches: 1
+    default_root_dir: /nas-ctm01/homes/pfsousa/MedDiff/DEFAULT/own_dataset
+    default_root_dir_postfix: own_dataset
+    resume_from_checkpoint: null
+    max_steps: -1
+    max_epochs: -1
+    precision: 16
+    gradient_clip_val: 1.0
+    embedding_dim: 8
+    n_codes: 16384
+    n_hiddens: 16
+    lr: 1.875e-05
+    downsample:
+    - 2
+    - 2
+    - 2
+    disc_channels: 64
+    disc_layers: 3
+    discriminator_iter_start: 1000
+    disc_loss_type: hinge
+    image_gan_weight: 1
+    video_gan_weight: 1
+    l1_weight: 1.0
+    gan_feat_weight: 4
+    perceptual_weight: 1
+    i3d_feat: false
+    restart_thres: 1.0
+    no_random_restart: false
+    norm_type: group
+    padding_type: replicate
+    num_groups: 32

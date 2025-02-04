@@ -70,11 +70,14 @@ def run(cfg: DictConfig):
         num_sample_rows=cfg.model.num_sample_rows,
         results_folder=cfg.model.results_folder,
         num_workers=cfg.model.num_workers,
+        max_grad_norm = None,#1.0,
         # logger=cfg.model.logger
     )
 
     if cfg.model.load_milestone:
-        trainer.load(cfg.model.load_milestone)
+        #trainer.load(cfg.model.load_milestone)
+        print("Loading milestone")
+        trainer.load(cfg.model.ddpm_ckpt)
 
     trainer.train()
 
